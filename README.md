@@ -1,21 +1,29 @@
 # hackathon-agents-2026
 
-Two agents under test, and the two mock SaaS MCP servers they act on.
+Agents under test, and the mock SaaS they act on.
 
 Everything here stands in for what lives **outside** the evaluation harness in a real deployment:
 the customer's agent, and the SaaS that agent operates. AgentSim is the separate repo that sits in
 the middle of those two and scores what the agent does.
 
 ```
-ops-agent/         Render infrastructure agent   (CLI: opsagent)
-ticket-agent/      Jira triage agent             (CLI: ticketagent)
+ops-agent/         Render infrastructure agent   (CLI: opsagent)      Python · uv
+ticket-agent/      Jira triage agent             (CLI: ticketagent)   Python · uv
+ad-agent/          Northwind Outdoor brand ad agent, CLI + chat       TypeScript · Node 24
 mock-render-mcp/   mock Render workspace  :8767  (Render's own tool names)
 mock-jira-mcp/     mock Jira Cloud        :8766  (mcp-atlassian tool names)
 ```
 
-The two agents are the thing under test. The two mocks are only there so an agent has something to
-talk to when the harness is *not* in the middle — useful for developing the agent itself, and for
-showing what the unscored behaviour looks like.
+The three agents are the things under test. The two mocks are only there so an MCP agent has
+something to talk to when the harness is *not* in the middle — useful for developing the agent
+itself, and for showing what the unscored behaviour looks like.
+
+The projects are independent and do not share a stack. `ops-agent` and `ticket-agent` are MCP
+clients that reach their SaaS over a URL. `ad-agent` is a different shape: it carries its own world
+(`world/` — brand docs, asset library, a metered render service, an ad platform over an
+event-sourced ledger) and its own scoring harness under `handoff/`, and talks to Gemini and
+WaveSpeed rather than to MCP. It is here because it is an agent under test, not because it plugs
+into the same seam.
 
 ## The proxy idea
 
@@ -74,5 +82,15 @@ with anything real.
 
 ## Tests
 
-`uv run python -m pytest -q` in each project — 10 / 8 / 7 / 6, all passing. The agents' tests never
-import the mocks; each has its own in-test stub MCP server.
+`uv run python -m pytest -q` in each of the four Python projects — 10 / 8 / 7 / 6, all passing. The
+agents' tests never import the mocks; each has its own in-test stub MCP server.
+
+`ad-agent` is Node 24 running TypeScript directly, with no build step — see `ad-agent/README.md`.
+
+## A note on ad-agent/handoff/runs/
+
+That directory holds 88 recorded run artifacts (85 JSON, 3 mp4), and is 25M of this repo's 28M.
+`cr_2_v1.mp4` and `cr_2_v2.mp4` alone are 23M of rendered video. They are committed because they
+are the recorded evidence for those runs, but git keeps binaries forever and they cannot be
+diffed — if they are regenerable output rather than evidence worth keeping, drop them and the
+repo falls to ~5M.

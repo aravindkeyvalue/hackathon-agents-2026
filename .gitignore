@@ -11,3 +11,7 @@ __pycache__/
 !.env.example
 
 .DS_Store
+
+# Node (ad-agent)
+node_modules/
+*.tsbuildinfo

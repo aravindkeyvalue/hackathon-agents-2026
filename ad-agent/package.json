@@ -1,0 +1,19 @@
+{
+  "name": "brand-ad-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "chat": "node chat/server.ts",
+    "agent": "node agent/main.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@google/genai": "^2.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "~6.0.2"
+  }
+}

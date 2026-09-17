@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Brand ad agent</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f7f5;
+        --panel: #fff;
+        --ink: #14151a;
+        --muted: #6b6f76;
+        --line: #e3e3df;
+        --accent: #2438f5;
+        --tool: #f0f1fb;
+        --bad: #b3261e;
+        --good: #1c7a4a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #14151a;
+          --panel: #1c1e25;
+          --ink: #f3f2ee;
+          --muted: #9aa0a8;
+          --line: #2c2f38;
+          --accent: #8b97ff;
+          --tool: #22252f;
+          --bad: #ff8a80;
+          --good: #6ddc9d;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
+      label { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+      label:has(input:disabled) { opacity: 0.5; }
+      select, textarea, button {
+        font: inherit;
+        color: var(--ink);
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 5px 8px;
+      }
+      button { cursor: pointer; background: var(--accent); color: #fff; border-color: transparent; font-weight: 500; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      button.ghost { background: transparent; color: var(--muted); border-color: var(--line); font-weight: 400; }
+      main { flex: 1; overflow-y: auto; padding: 20px 16px; }
+      .wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+      .turn { display: flex; flex-direction: column; gap: 8px; }
+      .turn.user { align-items: flex-end; }
+      .bubble { max-width: 90%; padding: 10px 13px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .user .bubble { background: var(--accent); color: #fff; }
+      .agent .bubble { background: var(--panel); border: 1px solid var(--line); }
+      .tool {
+        max-width: 90%;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: var(--tool);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 6px 9px;
+        overflow-wrap: anywhere;
+      }
+      .tool b { color: var(--accent); font-weight: 600; }
+      .tool .mark { float: right; color: var(--muted); }
+      .tool .mark.ok { color: var(--good); }
+      .tool .mark.bad { color: var(--bad); }
+      video { width: 220px; border-radius: 8px; border: 1px solid var(--line); }
+      .clips { display: flex; gap: 8px; flex-wrap: wrap; }
+      .err { color: var(--bad); }
+      .muted { color: var(--muted); font-size: 13px; }
+      .caret::after { content: "▍"; color: var(--muted); animation: blink 1s steps(2) infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+      footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 16px; }
+      .composer { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+      textarea { flex: 1; resize: none; min-height: 44px; max-height: 180px; }
+      details { max-width: 90%; }
+      summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+      pre { font: 12px/1.5 ui-monospace, Menlo, monospace; background: var(--tool); border: 1px solid var(--line); border-radius: 7px; padding: 9px; overflow-x: auto; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Brand ad agent</h1>
+      <label>record <select id="record"></select></label>
+      <label>model <select id="model"></select></label>
+      <label><input type="checkbox" id="render" /> render clips</label>
+      <button class="ghost" id="reset" type="button">New session</button>
+      <span class="muted" id="status"></span>
+    </header>
+
+    <main><div class="wrap" id="log"></div></main>
+
+    <footer>
+      <form class="composer" id="composer">
+        <textarea id="input" placeholder="Brief the agent, e.g. 2 vertical clips, 10s each, 1080p, for Reels. Campaign ridge-runner-launch on Meta." required></textarea>
+        <button id="send" type="submit">Send</button>
+      </form>
+    </footer>
+
+    <script type="module">
+      const $ = (id) => document.getElementById(id);
+      const log = $("log");
+      let session = null;
+      let sending = false;
+
+      const el = (tag, cls, text) => {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text !== undefined) n.textContent = text;
+        return n;
+      };
+      const scroll = (n) => n.scrollIntoView({ block: "end" });
+
+      function addTurn(role, text) {
+        const wrap = el("div", `turn ${role}`);
+        if (text !== undefined) wrap.append(el("div", "bubble", text));
+        log.append(wrap);
+        scroll(wrap);
+        return wrap;
+      }
+
+      function addLedger(events) {
+        if (!events?.length) return;
+        const d = el("details");
+        d.append(el("summary", null, `ledger: ${events.length} events`));
+        d.append(el("pre", null, events.map((e) => JSON.stringify(e)).join("\n")));
+        log.append(d);
+        scroll(d);
+      }
+
+      function addClips(wrap, clips) {
+        if (!clips?.length) return;
+        const row = el("div", "clips");
+        for (const src of clips) {
+          const v = el("video");
+          v.src = src;
+          v.controls = true;
+          row.append(v);
+        }
+        wrap.append(row);
+        scroll(row);
+      }
+
+      // A record or render change starts a fresh World on the server, so drop the local session id too.
+      const resetSession = () => {
+        session = null;
+        log.replaceChildren();
+        $("status").textContent = "new session";
+      };
+      $("reset").addEventListener("click", resetSession);
+      $("record").addEventListener("change", resetSession);
+      $("render").addEventListener("change", resetSession);
+
+      /** Reads an SSE body off fetch (EventSource cannot POST) and hands each frame to `onFrame`. */
+      async function readEvents(res, onFrame) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let cut;
+          while ((cut = buf.indexOf("\n\n")) !== -1) {
+            const line = buf
+              .slice(0, cut)
+              .split("\n")
+              .find((l) => l.startsWith("data: "));
+            buf = buf.slice(cut + 2);
+            if (line) onFrame(JSON.parse(line.slice(6)));
+          }
+        }
+      }
+
+      async function send(text) {
+        sending = true;
+        $("send").disabled = true;
+        $("status").textContent = "working…";
+        addTurn("user", text);
+
+        const wrap = addTurn("agent");
+        let bubble = null; // current text block; a tool call closes it so the next text starts a new one
+        const pending = new Map(); // tool name -> its row, so the result can mark it
+
+        const onFrame = (ev) => {
+          if (ev.type === "start") {
+            session = ev.session;
+            $("status").textContent = `${ev.model} · streaming`;
+          } else if (ev.type === "text") {
+            if (!bubble) {
+              bubble = el("div", "bubble caret");
+              wrap.append(bubble);
+            }
+            bubble.textContent += ev.delta;
+            scroll(bubble);
+          } else if (ev.type === "tool") {
+            bubble?.classList.remove("caret");
+            bubble = null;
+            const row = el("div", "tool");
+            row.append(el("span", "mark", "…"), el("b", null, ev.name), document.createTextNode(" " + JSON.stringify(ev.input ?? {})));
+            pending.set(ev.name, row);
+            wrap.append(row);
+            scroll(row);
+          } else if (ev.type === "tool_result") {
+            const mark = pending.get(ev.name)?.querySelector(".mark");
+            if (mark) {
+              mark.textContent = ev.ok ? "ok" : "error";
+              mark.className = `mark ${ev.ok ? "ok" : "bad"}`;
+            }
+          } else if (ev.type === "done") {
+            bubble?.classList.remove("caret");
+            session = ev.session;
+            addClips(wrap, ev.turns.at(-1)?.clips);
+            addLedger(ev.ledger);
+            $("status").textContent = `${ev.model} · stop=${ev.stop}`;
+          } else if (ev.type === "error") {
+            bubble?.classList.remove("caret");
+            wrap.append(el("div", "bubble err", ev.error));
+            $("status").textContent = "failed";
+          }
+        };
+
+        try {
+          const res = await fetch("/api/chat/stream", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              session,
+              message: text,
+              record: $("record").value,
+              render: $("render").checked,
+              model: $("model").value,
+            }),
+          });
+          // Validation failures answer with JSON before the stream opens.
+          if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
+          await readEvents(res, onFrame);
+        } catch (e) {
+          onFrame({ type: "error", error: e.message });
+        } finally {
+          sending = false;
+          $("send").disabled = false;
+        }
+      }
+
+      $("composer").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const text = $("input").value.trim();
+        if (!text || sending) return;
+        $("input").value = "";
+        send(text);
+      });
+
+      // Enter sends, Shift+Enter is a newline.
+      $("input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          $("composer").requestSubmit();
+        }
+      });
+
+      const config = await (await fetch("/api/config")).json();
+
+      for (const r of config.records) {
+        const opt = el("option", null, r);
+        opt.value = r;
+        opt.selected = r === config.defaultRecord;
+        $("record").append(opt);
+      }
+
+      // A model whose provider key is missing is shown but not selectable: the reason is the point.
+      const KEY_NAME = { anthropic: "ANTHROPIC_API_KEY", gemini: "GEMINI_API_KEY" };
+      for (const m of config.models) {
+        const opt = el("option", null, m.available ? m.id : `${m.id} — no ${KEY_NAME[m.provider]}`);
+        opt.value = m.id;
+        opt.disabled = !m.available;
+        opt.selected = m.id === config.defaultModel && m.available;
+        $("model").append(opt);
+      }
+      if (!$("model").value) $("model").selectedIndex = config.models.findIndex((m) => m.available);
+
+      $("render").checked = config.render;
+      $("render").disabled = !config.renderAvailable;
+      if (!config.renderAvailable) $("render").closest("label").title = "WAVESPEED_API_KEY is not set";
+    </script>
+  </body>
+</html>
