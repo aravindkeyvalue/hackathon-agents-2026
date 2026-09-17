@@ -1,0 +1,13 @@
+# uv / Python build artifacts — each of the four projects has its own venv
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+*.py[cod]
+
+# environment / secrets
+.env
+.env.*
+!.env.example
+
+.DS_Store

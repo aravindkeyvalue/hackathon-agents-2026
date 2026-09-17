@@ -1,0 +1,28 @@
+[project]
+name = "mockrender"
+version = "0.1.0"
+description = "A mock Render (render.com) exposed as an MCP server, for running and testing agents without a real account."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=1.20,<2",
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+mock-render-mcp = "mockrender.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mockrender"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
