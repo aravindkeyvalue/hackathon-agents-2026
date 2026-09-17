@@ -167,3 +167,35 @@ def test_eval_descriptor_validation(tmp_path):
         main(["eval", "--model", "scripted", "--run-file", str(f)])
     with pytest.raises(SystemExit, match="--open-url"):
         main(["eval", "--model", "scripted"])
+
+
+# ---------------------------------------------------------------- one Run, several MCP servers
+def test_multi_backend_merges_two_servers(serve):
+    """A harness that publishes one URL per system still gives the agent its whole tool set."""
+    from opsagent.backends import open_mcp
+
+    reads = serve(build_app(StubRender(offer=["list_services", "get_service"])), "/mcp")
+    writes = serve(build_app(StubRender(offer=["trigger_deploy"])), "/mcp")
+    b = open_mcp(f"{reads.base}/mcp,{writes.base}/mcp")
+    try:
+        assert b.tools() == ["list_services", "get_service", "trigger_deploy"]
+        assert b.call("get_service", {"serviceId": "srv-s"})["name"] == "staging-api"   # first server
+        assert b.call("trigger_deploy", {"serviceId": "srv-s"})["status"] == "live"     # second server
+        with pytest.raises(ToolError, match="no connected MCP server"):
+            b.call("list_logs", {})
+    finally:
+        b.close()
+
+
+def test_drive_reports_when_the_step_budget_runs_out(capsys):
+    """A wait loop that never resolves must still answer: a crash scores nothing, a report scores."""
+    from langgraph.errors import GraphRecursionError
+    from opsagent.cli import _drive
+
+    class Looping:
+        def stream(self, _state, **_kw):
+            yield {"messages": [type("AI", (), {"type": "ai", "content": "", "tool_calls": [{"name": "get_deploy", "args": {}}]})()]}
+            raise GraphRecursionError("Recursion limit of 60 reached")
+
+    final = _drive(Looping(), "check the deploy", max_steps=30)
+    assert "step budget" in final and "1 tool calls" in final

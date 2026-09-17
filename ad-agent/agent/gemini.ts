@@ -1,10 +1,10 @@
 // Same agent, Gemini provider. Manual function-calling loop mirroring agent.ts.
 import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from "@google/genai";
 import type { AgentRun, RunOptions } from "./types.ts";
-import type { World } from "../world/services.ts";
+import type { Dispatch } from "./dispatch.ts";
 import { requireKey } from "./agent.ts";
 import { systemPrompt } from "./policy.ts";
-import { TOOL_DEFS, execute } from "./tools.ts";
+import { TOOL_DEFS } from "./tools.ts";
 
 const MAX_TURNS = 12;
 const TOOL_RESULT_PREVIEW = 400;
@@ -29,7 +29,7 @@ export async function withRetry<T>(fn: () => Promise<T>, sleep = (ms: number) =>
   }
 }
 
-type Turn = { content: Content; text: string; calls: Part[]; finish?: string };
+type Turn = { content: Content; text: string; calls: Part[]; finish?: string; responseId?: string };
 
 /** Drain one streamed turn. Text arrives as deltas and function calls arrive whole, so the visible text is
  *  re-joined into a single part and the call parts are kept in order -- that is the shape the next request
@@ -37,6 +37,7 @@ type Turn = { content: Content; text: string; calls: Part[]; finish?: string };
 async function drain(stream: AsyncGenerator<{ candidates?: unknown[]; promptFeedback?: unknown }>, onEvent: RunOptions["onEvent"]): Promise<Turn> {
   let text = "";
   let finish: string | undefined;
+  let responseId: string | undefined;
   const calls: Part[] = [];
 
   for await (const chunk of stream as AsyncGenerator<import("@google/genai").GenerateContentResponse>) {
@@ -51,12 +52,13 @@ async function drain(stream: AsyncGenerator<{ candidates?: unknown[]; promptFeed
       }
     }
     finish = (candidate?.finishReason ?? chunk.promptFeedback?.blockReason ?? finish) as string | undefined;
+    responseId = chunk.responseId ?? responseId;
   }
 
-  return { content: { role: "model", parts: [...(text ? [{ text }] : []), ...calls] }, text, calls, finish };
+  return { content: { role: "model", parts: [...(text ? [{ text }] : []), ...calls] }, text, calls, finish, responseId };
 }
 
-export async function runGemini(brief: string, world: World, model: string, { history = [], onEvent }: RunOptions = {}): Promise<AgentRun> {
+export async function runGemini(brief: string, dispatch: Dispatch, model: string, { history = [], onEvent }: RunOptions = {}): Promise<AgentRun> {
   const ai = new GoogleGenAI({ apiKey: requireKey(model) });
   const contents: Content[] = [...(history as Content[]), { role: "user", parts: [{ text: brief }] }];
   const toolCalls: { name: string; input: unknown }[] = [];
@@ -71,7 +73,7 @@ export async function runGemini(brief: string, world: World, model: string, { hi
         config: { systemInstruction: systemPrompt(), tools: [{ functionDeclarations: declarations }] },
       }),
     );
-    const { content, text, calls, finish } = await drain(stream, onEvent);
+    const { content, text, calls, finish, responseId } = await drain(stream, onEvent);
 
     if (!text && calls.length === 0) {
       stop = String(finish ?? "no_candidates");
@@ -84,13 +86,15 @@ export async function runGemini(brief: string, world: World, model: string, { hi
       break;
     }
 
+    // One batch per turn. Gemini names the response; when it does not, the turn index does.
+    const batchId = responseId ?? `turn_${turn}`;
     const parts: Part[] = [];
     for (const part of calls) {
       const call = part.functionCall!;
       const name = call.name ?? "";
       toolCalls.push({ name, input: call.args });
       onEvent?.({ type: "tool", name, input: call.args });
-      const r = await execute(name, call.args ?? {}, world);
+      const r = await dispatch(name, call.args ?? {}, batchId);
       onEvent?.({ type: "tool_result", name, ok: !r.isError, output: r.output.slice(0, TOOL_RESULT_PREVIEW) });
       parts.push({ functionResponse: { id: call.id, name, response: r.isError ? { error: r.output } : { output: r.output } } });
     }

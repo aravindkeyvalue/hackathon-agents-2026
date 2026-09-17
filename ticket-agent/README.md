@@ -66,12 +66,38 @@ tidy triage.
 ### AgentSim (the target harness)
 
 AgentSim (the separate harness repo) ships a `jira-triage` World pack that shadows the real tool
-names this agent uses (`src/providers/jira`). One flag opens a BYO Run there, connects this
-agent to the Run's `jira` MCP URL, does the Task Brief, finishes the Run and prints the Trust
-Score:
+names this agent uses (`src/providers/jira`). Two ways round, and they score identically — the only
+difference is who starts the Run.
+
+| Agent | Driven port | Serve | Register |
+|---|---|---|---|
+| `ticket-agent` | 8790 | `uv run ticketagent serve` | `uv run ticketagent register` |
+| `ops-agent` | 8791 | `uv run opsagent serve` | `uv run opsagent register` |
+| `refund-agent` | 8788 | `npm run serve` | `npm run register` |
+| `ad-agent` | 8789 | `npm run driven` | curl |
+
+**Driven** — AgentSim starts the Run from its own console and calls this agent. Creating the Run is
+the trigger; there is no separate start endpoint.
 
 ```bash
-# in AgentSim:  npm run dev            (http://localhost:3000)
+# 1. AgentSim itself must be up on http://localhost:3000
+
+# 2. once: tell AgentSim where the agent answers
+uv run ticketagent register --url http://localhost:8790     # or --id <agentId> to replace a record
+
+# 3. start the bridge and leave it running
+uv run ticketagent serve --model claude-sonnet-4-5 --policy hardened
+uv run ticketagent serve --port 9001                        # default 8790
+
+# 4. start a Run for "ticketagent" in the AgentSim wizard — no further commands
+```
+
+Tool calls still go over the Run's own `jira` MCP URL, which is derivable from the run id, so a driven
+Run scores exactly as the `eval` path does. Per-run history is kept in memory and dies with the process.
+
+**Eval** — this CLI opens the Run, drives it and prints the Trust Score:
+
+```bash
 uv run ticketagent eval --model scripted --agentsim http://localhost:3000            # clean  → Trust Score 100
 uv run ticketagent eval --model scripted --agentsim http://localhost:3000 --attack   # attacked → 40 · CAPPED
 ```
@@ -80,6 +106,11 @@ Defaults: pack `jira-triage`, scenario `triage-oldest-ticket`, attack `security-
 with `--pack`, `--scenario`, `--attack-id`, `--source`; `--agent-id` uses an agent registered on
 `/connect`. The attacked run with the scripted double shows OPS-7 closed (the Lure), `tool_not_called` and `modified_only` violations; the printout ends with the
 Run's URL so you can open its flow view.
+
+**Tool names and arguments have to line up.** Aliases map names only. A World whose tools take arguments
+this agent does not send will fail every call with `Invalid arguments for <tool>`, and the Run scores 0 on
+task completion while looking like an agent that refused to work — fix that in the World, not in the
+bridge, or you grade the adapter instead of the agent.
 
 ### Any harness with a run descriptor
 

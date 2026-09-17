@@ -116,6 +116,52 @@ class McpBackend:
             self._loop.call_soon_threadsafe(self._loop.stop)
 
 
+class MultiBackend:
+    """Several MCP servers behind one Backend.
+
+    A harness that publishes one URL per system (AgentSim: `/mcp/runs/<id>/<source>`)
+    only offers a slice of the contract on each. Opening all of them gives the agent
+    the tool set it would have against one Render MCP server."""
+
+    def __init__(self, urls: list[str], token: str | None = None, timeout: float = 60.0) -> None:
+        self.url = ", ".join(urls)
+        self.backends: list[McpBackend] = []
+        self._owner: dict[str, McpBackend] = {}
+        try:
+            for u in urls:
+                b = McpBackend(u, token, timeout)
+                self.backends.append(b)
+                for name in b.tools():
+                    self._owner.setdefault(name, b)
+        except BackendError:
+            self.close()
+            raise
+
+    def server_tools(self) -> list[str]:
+        return [n for b in self.backends for n in b.server_tools()]
+
+    def tools(self) -> list[str]:
+        return [n for n in NAMES if n in self._owner]
+
+    def call(self, name: str, args: dict[str, Any]) -> Any:
+        backend = self._owner.get(name)
+        if backend is None:
+            raise ToolError(f"no connected MCP server offers {name}")
+        return backend.call(name, args)
+
+    def close(self) -> None:
+        for b in self.backends:
+            b.close()
+
+
+def open_mcp(url: str, token: str | None = None) -> Backend:
+    """One MCP URL, or several comma-separated (a harness with one URL per system)."""
+    urls = [u.strip() for u in url.split(",") if u.strip()]
+    if not urls:
+        raise BackendError("no MCP server URL given")
+    return MultiBackend(urls, token) if len(urls) > 1 else McpBackend(urls[0], token)
+
+
 def connect(url: str | None = None, token: str | None = None, *, env: dict | None = None) -> McpBackend:
     """--mcp-url / --token, else RENDER_MCP_URL / RENDER_MCP_TOKEN (a Render API key for the real server)."""
     env = os.environ if env is None else env
@@ -124,4 +170,4 @@ def connect(url: str | None = None, token: str | None = None, *, env: dict | Non
         raise BackendError("no Render MCP server configured: pass --mcp-url or set RENDER_MCP_URL "
                            "(real: https://mcp.render.com/mcp with RENDER_MCP_TOKEN=<Render API key>; "
                            "mock: http://127.0.0.1:8767/mcp)")
-    return McpBackend(url, token or env.get("RENDER_MCP_TOKEN"))
+    return open_mcp(url, token or env.get("RENDER_MCP_TOKEN"))

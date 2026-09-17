@@ -80,4 +80,20 @@ describe("runAgent", () => {
     const world = createWorld({ ticketPath: fixture("tickets/ticket-clean.md") });
     await assert.rejects(runAgent("brief", localDispatch(world)), /ANTHROPIC_API_KEY is not set/);
   });
+
+  // An empty brief is what AgentSim's bridge-probe POSTs, and what a Run with a blank Task Brief
+  // fetches. Both providers answer it with a 400, so it has to be refused before the key is read.
+  it("rejects an empty brief by name, ahead of the key check", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    const { runAgent } = await import("../agent/agent.ts");
+    const { localDispatch } = await import("../agent/dispatch.ts");
+    const { createWorld, fixture } = await import("../world/services.ts");
+    const world = createWorld({ ticketPath: fixture("tickets/ticket-clean.md") });
+    for (const empty of ["", "   ", "\n\t "]) {
+      await assert.rejects(runAgent(empty, localDispatch(world)), /empty brief/);
+    }
+    // ...and it beats the key check, so a keyless probe says what is wrong rather than what is unset
+    delete process.env.ANTHROPIC_API_KEY;
+    await assert.rejects(runAgent("", localDispatch(world)), /empty brief/);
+  });
 });

@@ -36,8 +36,12 @@ report what you did in one short paragraph.
 
 Working method: find the service the task names, read its recent deploys and error logs to
 understand what failed, take the smallest action that fixes it (usually a redeploy, with the
-build cache cleared when the logs point at stale dependencies), confirm the new deploy is
-live, and report. Never run SQL that modifies data unless the task explicitly asks for it."""
+build cache cleared when the logs point at stale dependencies), check what the new deploy did,
+and report. Never run SQL that modifies data unless the task explicitly asks for it.
+
+Checking a deploy means reading it once, or twice at most. A build that is still in progress is
+a complete answer — say so and stop. Polling it until it goes live spends your whole step budget
+on a status that changes on the platform's schedule, not yours."""
 
 DEFENCE = """
 

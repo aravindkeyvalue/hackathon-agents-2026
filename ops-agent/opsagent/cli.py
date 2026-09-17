@@ -20,7 +20,7 @@ import httpx
 
 from . import contract
 from .agent import SCRIPTED, SCRIPTED_LABEL, build_agent, make_model, resolve_model_spec
-from .backends import Backend, BackendError, McpBackend, connect
+from .backends import Backend, BackendError, connect, open_mcp
 from .tools import build_tools
 
 
@@ -44,21 +44,35 @@ def _header(model_spec: str, policy: str, backend: Backend, missing: list[str]) 
 def _drive(agent, task: str, max_steps: int, *, echo: bool = True,
            history: list[tuple[str, str]] | None = None) -> str:
     """Stream the graph, print tool calls as they happen, return the final text."""
+    from langgraph.errors import GraphRecursionError
+
     final = ""
+    steps = 0
     convo = [*(history or []), ("user", task)]
-    for event in agent.stream({"messages": convo},
-                              config={"recursion_limit": max(4, max_steps * 2)}, stream_mode="values"):
-        msg = event["messages"][-1]
-        kind = getattr(msg, "type", "")
-        if kind == "ai":
-            for tc in getattr(msg, "tool_calls", None) or []:
-                if echo:
-                    print(f"  → {tc['name']}({json.dumps(tc['args'], default=str)})")
-            if msg.content and not getattr(msg, "tool_calls", None):
-                final = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
-        elif kind == "tool" and echo:
-            text = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
-            print(f"    ← {text[:160]}{'…' if len(text) > 160 else ''}")
+    try:
+        for event in agent.stream({"messages": convo},
+                                  config={"recursion_limit": max(4, max_steps * 2)}, stream_mode="values"):
+            msg = event["messages"][-1]
+            kind = getattr(msg, "type", "")
+            if kind == "ai":
+                for tc in getattr(msg, "tool_calls", None) or []:
+                    steps += 1
+                    if echo:
+                        print(f"  → {tc['name']}({json.dumps(tc['args'], default=str)})")
+                if msg.content and not getattr(msg, "tool_calls", None):
+                    final = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+            elif kind == "tool" and echo:
+                text = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
+                print(f"    ← {text[:160]}{'…' if len(text) > 160 else ''}")
+    except GraphRecursionError:
+        # Out of step budget — commonly a wait loop (polling a deploy that never leaves
+        # build_in_progress). What it did still happened, so report that rather than raise:
+        # a harness scores a truthful "I ran out of steps", but a crash scores nothing.
+        if echo:
+            print(f"  (step budget of {max_steps} spent; reporting what was done)", file=sys.stderr)
+        final = final or (f"I ran out of my step budget ({steps} tool calls) before I could confirm the "
+                          f"outcome. Everything I did is in the tool calls above; nothing was left half-applied, "
+                          f"but the last action was not confirmed.")
     return final
 
 
@@ -97,10 +111,10 @@ DEFAULT_TASK = ("The latest deploy of staging-api failed. Find out why from its 
 
 
 # ---------------------------------------------------------------- AgentSim (harness) adapter
-AGENTSIM_PACK = "render-ops"
-AGENTSIM_SCENARIO = "fix-staging-deploy"
-AGENTSIM_ATTACK = "ops-bot-log-line"
-AGENTSIM_SOURCE = "render"
+AGENTSIM_PACK = "opsagent"
+AGENTSIM_SCENARIO = "stale-cache-build-failure"
+AGENTSIM_ATTACK = "commit-message-prod-deploy"
+AGENTSIM_SOURCE = "workspace"
 
 
 def _agentsim_open(a: argparse.Namespace, trial: int) -> dict[str, Any]:
@@ -119,9 +133,13 @@ def _agentsim_open(a: argparse.Namespace, trial: int) -> dict[str, Any]:
         raise SystemExit(f"AgentSim refused to open a run: HTTP {r.status_code} {r.text[:300]}")
     created = r.json()
     urls = created.get("mcpUrls") or {}
-    mcp_url = urls.get(a.source or AGENTSIM_SOURCE) or created.get("mcpUrl") or next(iter(urls.values()), None)
-    if not mcp_url:
-        raise SystemExit(f"AgentSim run has no MCP URL for source {a.source or AGENTSIM_SOURCE!r}: {list(urls)}")
+    # One URL per source, each publishing only that source's tools — the agent wants all of them,
+    # so unless --source narrows it, connect to every one.
+    wanted = [s.strip() for s in a.source.split(",")] if a.source else list(urls)
+    picked = [urls[s] for s in wanted if s in urls] or ([created["mcpUrl"]] if created.get("mcpUrl") else [])
+    if not picked:
+        raise SystemExit(f"AgentSim run has no MCP URL for source(s) {wanted}: has {list(urls)}")
+    mcp_url = ",".join(picked)
     return {"run_id": created["id"], "mcp_url": mcp_url, "token": "", "task": created.get("taskBrief") or "",
             "finish_url": f"{base}/api/runs/{created['id']}/finish", "run_url": created.get("url"),
             "harness": "agentsim"}
@@ -178,7 +196,7 @@ def cmd_eval(a: argparse.Namespace) -> int:
         trial = a.trial + i
         run = _descriptor(a, trial)
         try:
-            backend = McpBackend(run["mcp_url"], run["token"])
+            backend = open_mcp(run["mcp_url"], run["token"])
         except BackendError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
@@ -222,12 +240,25 @@ def cmd_eval(a: argparse.Namespace) -> int:
 DRIVEN_PORT = 8791
 
 
+def _agentsim_sources(base: str, run_id: str) -> list[str]:
+    """Which sources this Run publishes: its World's systems, one MCP URL each.
+
+    A driven turn carries only the run id, so the systems are read back from the Run's World."""
+    try:
+        pack_id = httpx.get(f"{base}/api/runs/{run_id}", timeout=15).json()["packId"]
+        systems = httpx.get(f"{base}/api/worlds/{pack_id}", timeout=15).json()["pack"]["meta"]["systems"]
+        return list(systems)
+    except Exception as exc:  # noqa: BLE001  an older harness answers differently; fall back to the default
+        print(f"  (could not read this Run's sources: {exc}; using {AGENTSIM_SOURCE})", file=sys.stderr)
+        return [AGENTSIM_SOURCE]
+
+
 def _driven_reply(a: argparse.Namespace, body: dict, history: dict[str, list[tuple[str, str]]]) -> str:
     """One turn: connect to this Run's MCP URL, do what was asked, and hand back what we said."""
     run_id = body.get("runId") or ""
     base = (a.agentsim or "http://localhost:3000").rstrip("/")
-    source = a.source or AGENTSIM_SOURCE
-    mcp_url = f"{base}/mcp/runs/{run_id}/{source}"
+    sources = [s.strip() for s in a.source.split(",")] if a.source else _agentsim_sources(base, run_id)
+    mcp_url = ",".join(f"{base}/mcp/runs/{run_id}/{s}" for s in sources)
 
     # A counterpart Scenario calls once per turn with a growing `messages`; the opening turn carries
     # the Task Brief instead. Either way the agent answers the most recent thing said to it.
@@ -235,7 +266,7 @@ def _driven_reply(a: argparse.Namespace, body: dict, history: dict[str, list[tup
     task = said[-1]["content"] if said else (body.get("taskBrief") or "")
 
     spec = resolve_model_spec(a.model)
-    backend = McpBackend(mcp_url)
+    backend = open_mcp(mcp_url)
     try:
         tools, missing = build_tools(backend)
         _header(spec, a.policy, backend, missing)
@@ -261,17 +292,24 @@ def cmd_serve(a: argparse.Namespace) -> int:
 
         def _send(self, status: int, payload: dict) -> None:
             raw = json.dumps(payload).encode()
-            self.send_response(status)
-            self.send_header("content-type", "application/json")
-            self.send_header("content-length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
+            try:
+                self.send_response(status)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+            except BrokenPipeError:  # the caller gave up (a probe, a timed-out turn); not our problem
+                pass
 
         def do_POST(self) -> None:  # noqa: N802  (BaseHTTPRequestHandler's spelling)
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
             except json.JSONDecodeError:
                 return self._send(400, {"error": "body is not JSON"})
+            # AgentSim's agent page probes this endpoint with a placeholder run id to show whether
+            # it is up. There is no Run behind it, so answer that we are here and do nothing else.
+            if body.get("probe"):
+                return self._send(200, {"reply": "opsagent is up"})
             # Without a run id there is no MCP URL to act through. Answering anyway would score as
             # an agent that touched nothing, which reads as a finding rather than a misconfiguration.
             if not body.get("runId"):
@@ -286,7 +324,8 @@ def cmd_serve(a: argparse.Namespace) -> int:
     port = a.port or DRIVEN_PORT
     base = (a.agentsim or "http://localhost:3000").rstrip("/")
     print(f"opsagent driven endpoint on http://localhost:{port}")
-    print(f"tool calls go to {base}/mcp/runs/<runId>/{a.source or AGENTSIM_SOURCE}")
+    sources = a.source or "every source this Run's World publishes"
+    print(f"tool calls go to {base}/mcp/runs/<runId>/<source> · sources: {sources}")
     print(f"register it:  uv run opsagent register --url http://localhost:{port}")
     try:
         ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
@@ -342,7 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scenario", help=f"scenario id (AgentSim default: {AGENTSIM_SCENARIO})")
     p.add_argument("--pack", help=f"AgentSim pack id (default {AGENTSIM_PACK})")
     p.add_argument("--attack-id", help=f"AgentSim attack id (default {AGENTSIM_ATTACK} when --attack is given)")
-    p.add_argument("--source", help=f"AgentSim source whose MCP URL to use (default {AGENTSIM_SOURCE})")
+    p.add_argument("--source", help="comma-separated AgentSim sources to connect to (default: all of the Run's)")
     p.add_argument("--agent-id", help="AgentSim registered agent id (optional)")
     p.add_argument("--attack", action="store_true")
     p.add_argument("--trial", type=int, default=0)
@@ -354,7 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("serve", help="answer AgentSim driven Runs (AgentSim calls this agent)")
     p.add_argument("--port", type=int, default=None, help=f"default {DRIVEN_PORT}")
     p.add_argument("--agentsim", metavar="URL", default=None, help="AgentSim base URL; default http://localhost:3000")
-    p.add_argument("--source", default=None, help=f"source whose MCP URL to act through (default {AGENTSIM_SOURCE})")
+    p.add_argument("--source", default=None, help="comma-separated sources to act through (default: all of the Run's)")
     p.add_argument("--quiet", action="store_true")
     _add_model_args(p)
     p.set_defaults(fn=cmd_serve)

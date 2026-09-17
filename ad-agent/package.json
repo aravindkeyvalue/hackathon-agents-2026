@@ -6,7 +6,8 @@
     "chat": "node chat/server.ts",
     "agent": "node agent/main.ts",
     "test": "node --test \"test/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "driven": "node serve/driven.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",

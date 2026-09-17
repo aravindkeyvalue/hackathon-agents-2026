@@ -72,21 +72,54 @@ staging** — while the agent reports a tidy fix.
 
 ### AgentSim (the target harness)
 
-AgentSim (the separate harness repo) ships a `render-ops` World pack that shadows the real tool
-names this agent uses (`src/providers/render`). One flag opens a BYO Run there, connects this
-agent to the Run's `render` MCP URL, does the Task Brief, finishes the Run and prints the Trust
-Score:
+AgentSim (the separate harness repo) holds the `opsagent` World — the same twelve Render tool
+names this agent uses, split across five sources (`workspace`, `services`, `deploys`,
+`observability`, `databases`), one MCP URL each. The agent connects to all of them, so it has
+its whole tool set inside the Run.
+
+Two ways round, and they score identically — the only difference is who starts the Run.
+
+| Agent | Driven port | Serve | Register |
+|---|---|---|---|
+| `ops-agent` | 8791 | `uv run opsagent serve` | `uv run opsagent register` |
+| `ticket-agent` | 8790 | `uv run ticketagent serve` | `uv run ticketagent register` |
+| `refund-agent` | 8788 | `npm run serve` | `npm run register` |
+| `ad-agent` | 8789 | `npm run driven` | curl |
+
+**Driven** — AgentSim starts the Run from its own console and calls this agent. Creating the Run is
+the trigger; there is no separate start endpoint.
 
 ```bash
-# in AgentSim:  npm run dev            (http://localhost:3000)
-uv run opsagent eval --model scripted --agentsim http://localhost:3000            # clean  → Trust Score 100
-uv run opsagent eval --model scripted --agentsim http://localhost:3000 --attack   # attacked → 40 · CAPPED
+# 1. AgentSim itself must be up on http://localhost:3000
+
+# 2. once: tell AgentSim where the agent answers
+uv run opsagent register --url http://localhost:8791          # or --id <agentId> to replace a record
+
+# 3. start the bridge and leave it running
+uv run opsagent serve --model claude-sonnet-4-5 --policy hardened
+uv run opsagent serve --port 9001                             # default 8791
+
+# 4. start a Run for "opsagent" in the AgentSim wizard — no further commands
 ```
 
-Defaults: pack `render-ops`, scenario `fix-staging-deploy`, attack `ops-bot-log-line`, source `render` — override
-with `--pack`, `--scenario`, `--attack-id`, `--source`; `--agent-id` uses an agent registered on
-`/connect`. The attacked run with the scripted double shows production redeployed (the Lure), `owner_is` and `reads_scoped` violations; the printout ends with the
+Per-run history is kept in memory and dies with the process.
+
+**Eval** — this CLI opens the Run, drives it and prints the Trust Score:
+
+```bash
+uv run opsagent eval --model scripted --agentsim http://localhost:3000            # clean
+uv run opsagent eval --model scripted --agentsim http://localhost:3000 --attack   # attacked
+```
+
+Defaults: pack `opsagent`, scenario `stale-cache-build-failure`, attack `commit-message-prod-deploy` —
+override with `--pack`, `--scenario`, `--attack-id`, `--source` (comma-separated; default is every source
+the Run publishes); `--agent-id` uses an agent registered on `/connect`. The printout ends with the
 Run's URL so you can open its flow view.
+
+**Tool names and arguments have to line up.** Aliases map names only. A World whose tools take arguments
+this agent does not send will fail every call with `Invalid arguments for <tool>`, and the Run scores 0 on
+task completion while looking like an agent that refused to work — fix that in the World, not in the
+bridge, or you grade the adapter instead of the agent.
 
 ### Any harness with a run descriptor
 

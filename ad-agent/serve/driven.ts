@@ -4,7 +4,10 @@
 // from the CLI. The only thing that changes is who starts it: AgentSim POSTs the Task Brief here
 // when someone presses Run, and finishes the Run itself once this answers. Nothing is typed.
 //
-//   node serve/driven.ts [--port 8788] [--agentsim-url http://localhost:3000]
+// Not to be confused with `chat/server.ts` on 8787: that one builds a local World and dispatches
+// through `localDispatch`, so it ignores runId and nothing it does reaches a Run.
+//
+//   node serve/driven.ts [--port 8789] [--agentsim-url http://localhost:3000]
 import { createServer, type IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -15,7 +18,8 @@ import { ROOT } from "../world/services.ts";
 try { process.loadEnvFile(join(ROOT, ".env")); } catch { /* no .env: rely on the shell */ }
 
 const { values: opt } = parseArgs({ options: { port: { type: "string" }, "agentsim-url": { type: "string" } } });
-const port = Number(opt.port ?? process.env.PORT ?? 8788);
+// 8787 is chat/, 8788 is refund-agent, 8791 is opsagent.
+const port = Number(opt.port ?? process.env.PORT ?? 8789);
 const base = opt["agentsim-url"] ?? process.env.AGENTSIM_URL ?? "http://localhost:3000";
 
 /** What AgentSim POSTs. `messages` is the exchange so far on a Scenario with a counterpart. */
@@ -23,7 +27,7 @@ type Drive = { runId?: string; taskBrief?: string; messages?: { role: "counterpa
 
 // A counterpart Scenario calls this endpoint once per turn with a growing `messages`. Keeping the
 // provider-native transcript per Run is what makes turn 2 a continuation rather than a fresh agent
-// that has forgotten it already refunded something.
+// that has forgotten what it already spent.
 const history = new Map<string, readonly unknown[]>();
 
 const readBody = async (req: IncomingMessage): Promise<string> => {
@@ -64,7 +68,7 @@ const server = createServer(async (req, res) => {
   const brief = prompt(body);
   if (brief.trim() === "") {
     console.log(`[driven] ${runId} probe -> alive, nothing to answer`);
-    return reply(200, { reply: "refund-agent ready" });
+    return reply(200, { reply: "ad-agent ready" });
   }
 
   const turn = (body.messages ?? []).length;
@@ -84,7 +88,8 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`refund-agent driven endpoint on http://localhost:${port}`);
+  console.log(`ad-agent driven endpoint on http://localhost:${port}`);
   console.log(`forwarding tool calls to ${base}/api/runs/<runId>/call`);
-  console.log(`register it:  npm run register -- --url http://localhost:${port}`);
+  console.log(`register it:  curl -s ${base}/api/agents -H 'content-type: application/json' \\`);
+  console.log(`                -d '{"name":"ad-agent","shape":"driven","url":"http://localhost:${port}"}'`);
 });

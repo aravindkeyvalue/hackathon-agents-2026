@@ -30,6 +30,10 @@ export function requireKey(model: string): string {
 
 /** async so a bad model or missing key rejects: a function typed Promise should not also throw synchronously. */
 export async function runAgent(brief: string, dispatch: Dispatch, opts: RunOptions = {}): Promise<AgentRun> {
+  // Both providers reject an empty first user message with a 400. Every caller can produce one --
+  // a Run whose Task Brief is blank, a driven POST carrying neither a brief nor a counterpart turn --
+  // so the guard belongs here, once, rather than at each call site. Named error beats an SDK 400.
+  if (brief.trim() === "") throw new Error("runAgent was given an empty brief; there is nothing to act on");
   const model = opts.model ?? process.env.AGENTSIM_MODEL ?? DEFAULT_MODEL;
   requireKey(model); // fail on an unknown or unkeyed model before any provider is constructed
   return providerOf(model) === "openai" ? runOpenAI(brief, dispatch, model, opts) : runAnthropic(brief, dispatch, model, opts);

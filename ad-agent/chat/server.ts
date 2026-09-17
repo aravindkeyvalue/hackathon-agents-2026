@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import type { AgentEvent } from "../agent/types.ts";
 import { DEFAULT_MODEL, KEY_FOR, providerOf, runAgent } from "../agent/agent.ts";
+import { localDispatch } from "../agent/dispatch.ts";
 import { createWorld, type World } from "../world/services.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -191,7 +192,7 @@ async function runTurn(session: Session, message: string, onEvent?: (e: AgentEve
   session.busy = true;
   const clipsBefore = clipUrls(session).length;
   try {
-    const run = await runAgent(message, session.world, { model: session.model, history: session.history, onEvent });
+    const run = await runAgent(message, localDispatch(session.world), { model: session.model, history: session.history, onEvent });
     session.history = run.messages;
     session.turns.push({ role: "user", text: message });
     session.turns.push({

@@ -1,10 +1,10 @@
 // A plain tool-using agent. Provider picked from the model name; Anthropic loop here, Gemini in gemini.ts.
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentRun, RunOptions } from "./types.ts";
-import type { World } from "../world/services.ts";
+import type { Dispatch } from "./dispatch.ts";
 import { runGemini } from "./gemini.ts";
 import { systemPrompt } from "./policy.ts";
-import { TOOL_DEFS, execute } from "./tools.ts";
+import { TOOL_DEFS } from "./tools.ts";
 
 export const DEFAULT_MODEL = "claude-haiku-4-5"; // cheapest current Claude; override with AGENTSIM_MODEL (gemini-* switches provider)
 const MAX_TURNS = 12;
@@ -28,13 +28,14 @@ export function requireKey(model: string): string {
   return key;
 }
 
-export function runAgent(brief: string, world: World, opts: RunOptions = {}): Promise<AgentRun> {
+/** async so a bad model or missing key rejects: a function typed Promise should not also throw synchronously. */
+export async function runAgent(brief: string, dispatch: Dispatch, opts: RunOptions = {}): Promise<AgentRun> {
   const model = opts.model ?? process.env.AGENTSIM_MODEL ?? DEFAULT_MODEL;
   requireKey(model); // fail on an unknown or unkeyed model before any provider is constructed
-  return providerOf(model) === "gemini" ? runGemini(brief, world, model, opts) : runAnthropic(brief, world, model, opts);
+  return providerOf(model) === "gemini" ? runGemini(brief, dispatch, model, opts) : runAnthropic(brief, dispatch, model, opts);
 }
 
-async function runAnthropic(brief: string, world: World, model: string, { history = [], onEvent }: RunOptions): Promise<AgentRun> {
+async function runAnthropic(brief: string, dispatch: Dispatch, model: string, { history = [], onEvent }: RunOptions): Promise<AgentRun> {
   const client = new Anthropic({ apiKey: requireKey(model) });
   const messages: Anthropic.MessageParam[] = [...(history as Anthropic.MessageParam[]), { role: "user", content: brief }];
   const toolCalls: { name: string; input: unknown }[] = [];
@@ -57,7 +58,7 @@ async function runAnthropic(brief: string, world: World, model: string, { histor
       if (block.type !== "tool_use") continue;
       toolCalls.push({ name: block.name, input: block.input });
       onEvent?.({ type: "tool", name: block.name, input: block.input });
-      const r = await execute(block.name, block.input, world);
+      const r = await dispatch(block.name, block.input, res.id);
       onEvent?.({ type: "tool_result", name: block.name, ok: !r.isError, output: r.output.slice(0, TOOL_RESULT_PREVIEW) });
       results.push({ type: "tool_result", tool_use_id: block.id, content: r.output, is_error: r.isError });
     }
