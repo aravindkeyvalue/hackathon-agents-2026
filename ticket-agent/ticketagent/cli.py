@@ -3,6 +3,8 @@
     ticketagent tools [--json]                          the Jira tools this agent uses
     ticketagent run ["<task>"] --mcp-url URL [--token]  triage the Jira behind that MCP URL
     ticketagent eval --open-url … --scenario …          run inside an external harness and print its verdict
+    ticketagent serve [--port 8790]                     answer AgentSim driven Runs (it calls us)
+    ticketagent register [--url …]                      tell AgentSim where this agent answers
 
 The MCP URL is the whole integration: a mock (mock-jira-mcp, http://127.0.0.1:8766/mcp),
 an mcp-atlassian or Atlassian MCP endpoint, or a harness's per-run URL.
@@ -44,9 +46,11 @@ def _header(model_spec: str, policy: str, backend: Backend, missing: list[str]) 
         print(f"  contract tools not offered by this backend (dropped): {', '.join(missing)}")
 
 
-def _drive(agent, task: str, max_steps: int, *, echo: bool = True) -> str:
+def _drive(agent, task: str, max_steps: int, *, echo: bool = True,
+           history: list[tuple[str, str]] | None = None) -> str:
     final = ""
-    for event in agent.stream({"messages": [("user", task)]},
+    convo = [*(history or []), ("user", task)]
+    for event in agent.stream({"messages": convo},
                               config={"recursion_limit": max(4, max_steps * 2)}, stream_mode="values"):
         msg = event["messages"][-1]
         kind = getattr(msg, "type", "")
@@ -207,6 +211,109 @@ def cmd_eval(a: argparse.Namespace) -> int:
     return 0 if passed == a.k else 1
 
 
+# ---------------------------------------------------------------- AgentSim (driven) adapter
+#
+# The inverse of the eval adapter above. There, this CLI opens the Run and drives itself; here
+# AgentSim opens the Run from its own UI and calls us, so nothing is typed to start one. The tool
+# calls still go over this Run's MCP URL, which is derivable from the run id, so a driven Run is
+# scored exactly like an eval one.
+DRIVEN_PORT = 8790
+
+
+def _driven_reply(a: argparse.Namespace, body: dict, history: dict[str, list[tuple[str, str]]]) -> str:
+    """One turn: connect to this Run's MCP URL, do what was asked, and hand back what we said."""
+    run_id = body.get("runId") or ""
+    base = (a.agentsim or "http://localhost:3000").rstrip("/")
+    source = a.source or AGENTSIM_SOURCE
+    mcp_url = f"{base}/mcp/runs/{run_id}/{source}"
+
+    # A counterpart Scenario calls once per turn with a growing `messages`; the opening turn carries
+    # the Task Brief instead. Either way the agent answers the most recent thing said to it.
+    said = [m for m in (body.get("messages") or []) if m.get("role") == "counterpart"]
+    task = said[-1]["content"] if said else (body.get("taskBrief") or "")
+
+    spec = resolve_model_spec(a.model)
+    backend = McpBackend(mcp_url)
+    try:
+        tools, missing = build_tools(backend)
+        _header(spec, a.policy, backend, missing)
+        print(f"  driven run {run_id} · turn {len(body.get('messages') or [])} · {len(tools)} tools")
+        agent = build_agent(make_model(spec), tools, a.policy)
+        final = _drive(agent, task, a.max_steps, echo=not a.quiet, history=history.get(run_id))
+    finally:
+        backend.close()
+
+    prior = history.setdefault(run_id, [])
+    prior.extend([("user", task), ("assistant", final)])
+    return final
+
+
+def cmd_serve(a: argparse.Namespace) -> int:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    history: dict[str, list[tuple[str, str]]] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args: Any) -> None:  # the run header is the log
+            pass
+
+        def _send(self, status: int, payload: dict) -> None:
+            raw = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self) -> None:  # noqa: N802  (BaseHTTPRequestHandler's spelling)
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
+            except json.JSONDecodeError:
+                return self._send(400, {"error": "body is not JSON"})
+            # Without a run id there is no MCP URL to act through. Answering anyway would score as
+            # an agent that touched nothing, which reads as a finding rather than a misconfiguration.
+            if not body.get("runId"):
+                return self._send(400, {"error": "no runId: this endpoint answers AgentSim driven Runs"})
+            try:
+                # AgentSim finishes the Run itself once this response lands; finishing it here would race that.
+                return self._send(200, {"reply": _driven_reply(a, body, history)})
+            except Exception as exc:  # noqa: BLE001  a failed turn is reported, never fatal to the server
+                print(f"error: driven turn failed: {exc}", file=sys.stderr)
+                return self._send(500, {"error": str(exc)})
+
+    port = a.port or DRIVEN_PORT
+    base = (a.agentsim or "http://localhost:3000").rstrip("/")
+    print(f"ticketagent driven endpoint on http://localhost:{port}")
+    print(f"tool calls go to {base}/mcp/runs/<runId>/{a.source or AGENTSIM_SOURCE}")
+    print(f"register it:  uv run ticketagent register --url http://localhost:{port}")
+    try:
+        ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
+def cmd_register(a: argparse.Namespace) -> int:
+    """Register as shape 'driven' so the agent appears in AgentSim's New Run wizard."""
+    base = (a.agentsim or "http://localhost:3000").rstrip("/")
+    url = a.url or f"http://localhost:{a.port or DRIVEN_PORT}"
+    body = {"name": "ticketagent", "version": "0.1.0", "shape": "driven", "url": url,
+            "toolAliases": json.loads(a.aliases) if a.aliases else {},
+            "description": "Jira triage agent. Acts only through a Jira MCP server.",
+            "notes": "Driven: AgentSim POSTs the Task Brief; the agent acts over the Run's MCP URL."}
+    if a.id:
+        body["id"] = a.id
+    r = httpx.post(f"{base}/api/agents", json=body, timeout=30)
+    if r.status_code >= 400:
+        print(f"error: AgentSim refused the registration: HTTP {r.status_code} {r.text[:300]}", file=sys.stderr)
+        return 2
+    agent = r.json()
+    print(f"{'replaced' if r.status_code == 200 else 'registered'}  {agent['id']}  shape={agent['shape']}  url={agent['url']}")
+    print(f"\nStart a Run for it at {base} — no commands, just the wizard.")
+    print(f"Keep the endpoint up:  uv run ticketagent serve")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="ticketagent", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -240,6 +347,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet", action="store_true")
     _add_model_args(p)
     p.set_defaults(fn=cmd_eval)
+
+    p = sub.add_parser("serve", help="answer AgentSim driven Runs (AgentSim calls this agent)")
+    p.add_argument("--port", type=int, default=None, help=f"default {DRIVEN_PORT}")
+    p.add_argument("--agentsim", metavar="URL", default=None, help="AgentSim base URL; default http://localhost:3000")
+    p.add_argument("--source", default=None, help=f"source whose MCP URL to act through (default {AGENTSIM_SOURCE})")
+    p.add_argument("--quiet", action="store_true")
+    _add_model_args(p)
+    p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser("register", help="tell AgentSim where this agent answers")
+    p.add_argument("--url", default=None, help=f"the URL AgentSim should call; default http://localhost:{DRIVEN_PORT}")
+    p.add_argument("--port", type=int, default=None)
+    p.add_argument("--id", default=None, help="replace an existing agent record instead of adding one")
+    p.add_argument("--aliases", default=None, help='JSON {"theirName": "ourTool"} when the World names tools differently')
+    p.add_argument("--agentsim", metavar="URL", default=None, help="AgentSim base URL; default http://localhost:3000")
+    p.set_defaults(fn=cmd_register)
     return ap
 
 
