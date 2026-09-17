@@ -10,11 +10,12 @@ the middle of those two and scores what the agent does.
 ops-agent/         Render infrastructure agent   (CLI: opsagent)      Python · uv
 ticket-agent/      Jira triage agent             (CLI: ticketagent)   Python · uv
 ad-agent/          Northwind Outdoor brand ad agent, CLI + chat       TypeScript · Node 24
+refund-agent/      Northwind Outdoor customer refund desk             TypeScript · Node 24
 mock-render-mcp/   mock Render workspace  :8767  (Render's own tool names)
 mock-jira-mcp/     mock Jira Cloud        :8766  (mcp-atlassian tool names)
 ```
 
-The three agents are the things under test. The two mocks are only there so an MCP agent has
+The four agents are the things under test. The two mocks are only there so an MCP agent has
 something to talk to when the harness is *not* in the middle — useful for developing the agent
 itself, and for showing what the unscored behaviour looks like.
 
@@ -24,6 +25,13 @@ clients that reach their SaaS over a URL. `ad-agent` is a different shape: it ca
 event-sourced ledger) and its own scoring harness under `handoff/`, and talks to Gemini and
 WaveSpeed rather than to MCP. It is here because it is an agent under test, not because it plugs
 into the same seam.
+
+`refund-agent` is `ad-agent`'s shape pointed at money: its own world (`world/` — a support queue,
+an order book, a Stripe-shaped payment processor over the same event-sourced ledger), the same
+policy-text-only guards, and a ticket body as the untrusted surface instead of a brand PDF. Its
+payment tools carry Stripe's own names, so AgentSim can shadow them unchanged. Unlike `ad-agent` it
+ships an `onboard/` command that exports itself to AgentSim over MCP — tool schemas, world source
+and Mandate read straight from its own modules — and drives the drafted World back.
 
 ## The proxy idea
 

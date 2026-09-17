@@ -1,0 +1,30 @@
+{
+  "now": "2026-09-15T09:00:00Z",
+  "customers": [
+    { "id": "cus_301", "name": "Ayesha Karim", "email": "ayesha.karim@example.com" },
+    { "id": "cus_302", "name": "Ruben Ortega", "email": "ruben.ortega@example.com" },
+    { "id": "cus_303", "name": "Daniel Whitfield", "email": "daniel.whitfield@example.com" }
+  ],
+  "orders": [
+    { "id": "ord_4401", "customer_id": "cus_301", "items": ["Ridge Runner trail shoe"], "total": 14900, "placed_at": "2026-09-09T11:04:00Z", "delivered_at": "2026-09-12T15:22:00Z", "status": "delivered" },
+    { "id": "ord_4402", "customer_id": "cus_301", "items": ["Merino base layer", "Wool socks x3"], "total": 9800, "placed_at": "2026-08-28T09:15:00Z", "delivered_at": "2026-08-31T10:41:00Z", "status": "delivered" },
+    { "id": "ord_4403", "customer_id": "cus_302", "items": ["Summit 45L pack"], "total": 23500, "placed_at": "2026-06-30T14:20:00Z", "delivered_at": "2026-07-04T12:05:00Z", "status": "delivered" },
+    { "id": "ord_4406", "customer_id": "cus_302", "items": ["Alpine down jacket"], "total": 27900, "placed_at": "2026-09-07T13:11:00Z", "delivered_at": "2026-09-10T09:48:00Z", "status": "delivered" },
+    { "id": "ord_4404", "customer_id": "cus_303", "items": ["Storm shell jacket"], "total": 31900, "placed_at": "2026-09-13T18:02:00Z", "status": "shipped" },
+    { "id": "ord_4405", "customer_id": "cus_303", "items": ["Trail gaiters"], "total": 4200, "placed_at": "2026-09-05T08:40:00Z", "delivered_at": "2026-09-08T16:30:00Z", "status": "delivered" },
+    { "id": "ord_4407", "customer_id": "cus_303", "items": ["Vector 400 headlamp"], "total": 18900, "placed_at": "2026-09-08T07:55:00Z", "delivered_at": "2026-09-11T14:12:00Z", "status": "delivered" },
+    { "id": "ord_4408", "customer_id": "cus_303", "items": ["Windshield camp stove"], "total": 17500, "placed_at": "2026-09-06T20:18:00Z", "delivered_at": "2026-09-09T11:27:00Z", "status": "delivered" },
+    { "id": "ord_4409", "customer_id": "cus_303", "items": ["Insulated sleeping mat"], "total": 16800, "placed_at": "2026-09-03T10:02:00Z", "delivered_at": "2026-09-06T13:50:00Z", "status": "delivered" }
+  ],
+  "payments": [
+    { "id": "pi_9001", "order_id": "ord_4401", "customer_id": "cus_301", "amount": 14900, "card_last4": "4242", "status": "succeeded", "created_at": "2026-09-09T11:04:12Z" },
+    { "id": "pi_9002", "order_id": "ord_4402", "customer_id": "cus_301", "amount": 9800, "card_last4": "4242", "status": "succeeded", "created_at": "2026-08-28T09:15:08Z" },
+    { "id": "pi_9003", "order_id": "ord_4403", "customer_id": "cus_302", "amount": 23500, "card_last4": "7813", "status": "succeeded", "created_at": "2026-06-30T14:20:19Z" },
+    { "id": "pi_9006", "order_id": "ord_4406", "customer_id": "cus_302", "amount": 27900, "card_last4": "7813", "status": "succeeded", "created_at": "2026-09-07T13:11:05Z" },
+    { "id": "pi_9004", "order_id": "ord_4404", "customer_id": "cus_303", "amount": 31900, "card_last4": "0199", "status": "succeeded", "created_at": "2026-09-13T18:02:07Z" },
+    { "id": "pi_9005", "order_id": "ord_4405", "customer_id": "cus_303", "amount": 4200, "card_last4": "0199", "status": "succeeded", "created_at": "2026-09-05T08:40:11Z" },
+    { "id": "pi_9007", "order_id": "ord_4407", "customer_id": "cus_303", "amount": 18900, "card_last4": "0199", "status": "succeeded", "created_at": "2026-09-08T07:55:14Z" },
+    { "id": "pi_9008", "order_id": "ord_4408", "customer_id": "cus_303", "amount": 17500, "card_last4": "0199", "status": "succeeded", "created_at": "2026-09-06T20:18:03Z" },
+    { "id": "pi_9009", "order_id": "ord_4409", "customer_id": "cus_303", "amount": 16800, "card_last4": "0199", "status": "succeeded", "created_at": "2026-09-03T10:02:22Z" }
+  ]
+}
