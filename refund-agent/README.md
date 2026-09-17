@@ -10,7 +10,7 @@ Node 24 runs the TypeScript directly — there is no build step.
 |---|---|
 | `agent/` | The agent. Policy prompt with guards, tool schemas, dispatch, and one loop per provider. This is the thing under test. |
 | `world/` | Northwind's refund desk as APIs: the support queue, the order book, the payment processor. Event-sourced ledger underneath. |
-| `lib/` | The streamable-HTTP MCP client, shared by the payment processor and the exporter. |
+| `lib/` | The streamable-HTTP MCP client, and the AgentSim forwarder. |
 | `fixtures/` | The seed rows (`data.json`) and the ticket ladder (`tickets/`). |
 | `onboard/` | Exports this agent to AgentSim over MCP and drives the World it drafts back. |
 | `test/` | Key gating, world arithmetic, tool dispatch, export payload. No keys, no network. |
@@ -22,7 +22,7 @@ Put keys in `.env` (copy `.env.example`; gitignored), then `npm install` once.
 ```bash
 npm run agent                                            # the clean ticket
 npm run agent -- --ticket fixtures/tickets/ticket-poison-4-splits.md
-npm test                                                 # 52 tests, no keys required
+npm test                                                 # 59 tests, no keys required
 ```
 
 `npm run agent` prints the tool calls the model made, its final summary, and the ledger afterwards — what
@@ -42,6 +42,39 @@ pins all of this.
 ```bash
 AGENTSIM_MODEL=gpt-5 npm run agent -- --ticket fixtures/tickets/ticket-poison-4-splits.md
 ```
+
+## Running against AgentSim
+
+AgentSim does not launch this agent. You create a Run, then point the agent at it; the agent keeps its own
+loop, model and prompt, and only its tool calls go somewhere else.
+
+```bash
+# once: register the agent, mapping its tool names onto the World's
+curl -s localhost:3000/api/agents -H 'content-type: application/json' -d '{
+  "name": "refund-agent", "version": "0.1.0", "shape": "forwarder",
+  "toolAliases": { "read_ticket": "get_ticket", "escalate_to_human": "update_ticket" }
+}'                                                        # -> { "id": "agt_..." }
+
+# per run
+curl -s localhost:3000/api/runs -H 'content-type: application/json' -d '{
+  "packId": "<pack>", "scenarioId": "<scenario>", "attackId": "<attack>",
+  "agent": { "kind": "byo", "agentId": "agt_..." }
+}'                                                        # -> { "id": "run_..." }
+
+npm run agent -- --agentsim run_... --finish
+```
+
+In that mode the Run owns the world: the Task Brief is fetched from it, every tool call is forwarded to
+`/api/runs/<id>/call`, and the local fixtures, ledger and `--ticket` flag are not used. `--finish` closes the
+Run and prints its score. `--agentsim-url` (or `AGENTSIM_URL`) points at a server other than localhost:3000.
+
+Calls the model issued in one turn share a `batchId`, so AgentSim draws them as a single Wave.
+
+**Tool names have to line up.** The agent calls `read_ticket` and `escalate_to_human`; a World drafted from
+this agent by `npm run onboard` will carry those names already, and any other World needs the `toolAliases`
+above. **So does the Mandate**: this agent enforces its own caps and its own 30-day delivery window, and
+against a Scenario whose Policy says something different it will follow its own and lose task completion.
+A World drafted from the agent is the way those agree.
 
 ## Where Stripe lives
 

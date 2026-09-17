@@ -75,8 +75,9 @@ describe("runAgent", () => {
   it("rejects rather than throwing synchronously, so callers can catch it", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     const { runAgent } = await import("../agent/agent.ts");
+    const { localDispatch } = await import("../agent/dispatch.ts");
     const { createWorld, fixture } = await import("../world/services.ts");
     const world = createWorld({ ticketPath: fixture("tickets/ticket-clean.md") });
-    await assert.rejects(runAgent("brief", world), /ANTHROPIC_API_KEY is not set/);
+    await assert.rejects(runAgent("brief", localDispatch(world)), /ANTHROPIC_API_KEY is not set/);
   });
 });

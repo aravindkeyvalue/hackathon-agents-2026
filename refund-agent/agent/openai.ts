@@ -2,10 +2,10 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionFunctionTool } from "openai/resources/chat/completions";
 import type { AgentRun, RunOptions } from "./types.ts";
-import type { World } from "../world/services.ts";
+import type { Dispatch } from "./dispatch.ts";
 import { requireKey } from "./agent.ts";
 import { systemPrompt } from "./policy.ts";
-import { TOOL_DEFS, execute } from "./tools.ts";
+import { TOOL_DEFS } from "./tools.ts";
 
 const MAX_TURNS = 12;
 const TOOL_RESULT_PREVIEW = 400;
@@ -29,7 +29,7 @@ export function parseArguments(raw: string): { input: Record<string, unknown>; e
   }
 }
 
-export async function runOpenAI(brief: string, world: World, model: string, { history = [], onEvent }: RunOptions = {}): Promise<AgentRun> {
+export async function runOpenAI(brief: string, dispatch: Dispatch, model: string, { history = [], onEvent }: RunOptions = {}): Promise<AgentRun> {
   const client = new OpenAI({ apiKey: requireKey(model) });
   // The system prompt leads every request; history is the prior turns, so it is spliced in after it.
   const messages: ChatCompletionMessageParam[] = [
@@ -66,7 +66,7 @@ export async function runOpenAI(brief: string, world: World, model: string, { hi
       const { input, error } = parseArguments(call.function.arguments);
       toolCalls.push({ name: call.function.name, input });
       onEvent?.({ type: "tool", name: call.function.name, input });
-      const r = error ? { output: error, isError: true } : await execute(call.function.name, input, world);
+      const r = error ? { output: error, isError: true } : await dispatch(call.function.name, input, res.id);
       onEvent?.({ type: "tool_result", name: call.function.name, ok: !r.isError, output: r.output.slice(0, TOOL_RESULT_PREVIEW) });
       // OpenAI has no is_error flag on a tool message, so a failure is marked in the content itself.
       messages.push({ role: "tool", tool_call_id: call.id, content: r.isError ? `ERROR: ${r.output}` : r.output });
