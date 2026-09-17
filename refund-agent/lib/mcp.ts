@@ -1,4 +1,5 @@
 // A small streamable-HTTP MCP client: enough to call one server's tools and read the result.
+// Shared: onboard/ exports the agent through it, and world/ reaches the payment processor through it.
 // The transport answers either JSON or a one-event SSE stream, so both are unwrapped here.
 export class McpError extends Error {}
 
@@ -14,7 +15,9 @@ export function unwrap(body: string): Rpc {
   throw new McpError(`no JSON-RPC payload in response: ${trimmed.slice(0, 200)}`);
 }
 
-export function createClient(url: string) {
+export type McpClient = { initialize(): Promise<unknown>; call(name: string, args: Record<string, unknown>): Promise<string> };
+
+export function createClient(url: string): McpClient {
   let id = 0;
   let sessionId: string | undefined;
 

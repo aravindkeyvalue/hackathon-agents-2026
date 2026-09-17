@@ -7,7 +7,7 @@
 //   node onboard/main.ts --dry-run                        print what would be sent, call nothing
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { McpError, createClient } from "./mcp.ts";
+import { McpError, createClient } from "../lib/mcp.ts";
 import { registerAgentArgs, toolList } from "./payload.ts";
 import { ROOT } from "../world/services.ts";
 

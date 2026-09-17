@@ -1,7 +1,8 @@
-// A plain tool-using agent. Provider picked from the model name; only the Anthropic loop is wired.
+// A plain tool-using agent. Provider picked from the model name; Anthropic loop here, OpenAI in openai.ts.
 import Anthropic from "@anthropic-ai/sdk";
 import type { AgentRun, RunOptions } from "./types.ts";
 import type { World } from "../world/services.ts";
+import { runOpenAI } from "./openai.ts";
 import { systemPrompt } from "./policy.ts";
 import { TOOL_DEFS, execute } from "./tools.ts";
 
@@ -9,17 +10,19 @@ export const DEFAULT_MODEL = "claude-haiku-4-5"; // cheapest current Claude; ove
 const MAX_TURNS = 12;
 const TOOL_RESULT_PREVIEW = 400; // a ticket body can be long; the event stream only needs a look at it
 
-export const KEY_FOR = { anthropic: "ANTHROPIC_API_KEY" } as const;
+export const KEY_FOR = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY" } as const;
 export type Provider = keyof typeof KEY_FOR;
 
 /** Unrecognised prefixes get no provider at all. Falling back to one would mean spending a key on a model
  *  the caller never asked any particular provider for. */
-export const providerOf = (model: string): Provider | undefined => (model.startsWith("claude") ? "anthropic" : undefined);
+export const providerOf = (model: string): Provider | undefined =>
+  model.startsWith("claude") ? "anthropic" : model.startsWith("gpt") || /^o\d/.test(model) ? "openai" : undefined;
 
-/** A model's key is read only on the path that runs it. Named error beats an SDK 401. */
+/** A model's key is read only on the path that runs it: picking gpt-* never touches ANTHROPIC_API_KEY,
+ *  and picking claude-* never touches OPENAI_API_KEY. Named error beats an SDK 401. */
 export function requireKey(model: string): string {
   const provider = providerOf(model);
-  if (!provider) throw new Error(`${model} has no known provider; expected a claude-* model`);
+  if (!provider) throw new Error(`${model} has no known provider; expected a claude-*, gpt-* or o-series model`);
   const key = process.env[KEY_FOR[provider]];
   if (!key) throw new Error(`${KEY_FOR[provider]} is not set, and ${model} needs it`);
   return key;
@@ -29,7 +32,7 @@ export function requireKey(model: string): string {
 export async function runAgent(brief: string, world: World, opts: RunOptions = {}): Promise<AgentRun> {
   const model = opts.model ?? process.env.AGENTSIM_MODEL ?? DEFAULT_MODEL;
   requireKey(model); // fail on an unknown or unkeyed model before any provider is constructed
-  return runAnthropic(brief, world, model, opts);
+  return providerOf(model) === "openai" ? runOpenAI(brief, world, model, opts) : runAnthropic(brief, world, model, opts);
 }
 
 async function runAnthropic(brief: string, world: World, model: string, { history = [], onEvent }: RunOptions): Promise<AgentRun> {

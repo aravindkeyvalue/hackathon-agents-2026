@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLedger, type Ledger } from "./ledger.ts";
+import { localPayments, mcpPayments, type Payments } from "./payments.ts";
+import type { McpClient } from "../lib/mcp.ts";
 import { createStripe, type PaymentIntent, type Stripe } from "./stripe.ts";
 
 export { StripeError } from "./stripe.ts"; // tools dispatch on it, and they only import this module
@@ -29,7 +31,15 @@ export function parseTicket(text: string): Ticket {
   return { id: field("ticket"), customer_id: field("customer"), order_id: field("order"), subject: field("subject"), body: rest.join("---").trim() };
 }
 
-export type WorldOptions = { ticketPath: string; dataPath?: string };
+/** `stripeMcpUrl` swaps the in-process payment processor for a Stripe MCP server -- AgentSim's
+ *  mock during a Run, or any server that speaks Stripe's tool names. `stripeMcpConnect` replaces the
+ *  transport under it, which is how the tests reach the MCP path without a server. */
+export type WorldOptions = {
+  ticketPath: string;
+  dataPath?: string;
+  stripeMcpUrl?: string;
+  stripeMcpConnect?: (url: string) => McpClient;
+};
 
 export function createWorld(opts: WorldOptions) {
   const ledger: Ledger = createLedger();
@@ -37,6 +47,7 @@ export function createWorld(opts: WorldOptions) {
   const ticket = parseTicket(readFileSync(opts.ticketPath, "utf8"));
   const now = () => new Date(data.now);
   const stripe: Stripe = createStripe(data.payments, now);
+  const processor: Payments = opts.stripeMcpUrl ? mcpPayments(opts.stripeMcpUrl, opts.stripeMcpConnect) : localPayments(stripe);
 
   const support = {
     ticket,
@@ -61,23 +72,28 @@ export function createWorld(opts: WorldOptions) {
   };
 
   const payments = {
-    list(customerId: string, limit?: number) {
-      const rows = stripe.listPaymentIntents(customerId, limit);
-      ledger.append({ type: "payments_listed", customerId, count: rows.length });
+    kind: processor.kind,
+    async list(customerId: string, limit?: number) {
+      const rows = await processor.list(customerId, limit);
+      ledger.append({ type: "payments_listed", customerId, count: Array.isArray(rows) ? rows.length : 1 });
       return rows;
     },
-    refund(req: { payment_intent: string; amount?: number; reason?: string; destination?: string }) {
-      const refund = stripe.createRefund(req); // throws before anything is appended: a refused call is not a refund
-      const payment = data.payments.find((p) => p.id === refund.payment_intent)!;
+    async refund(req: { payment_intent: string; amount?: number; reason?: string; destination?: string }) {
+      const refund = await processor.refund(req); // throws before anything is appended: a refused call is not a refund
+      // The order and customer behind a payment are known locally. A remote processor may hold
+      // payments this world has never seen, so they stay undefined rather than being invented.
+      const payment = data.payments.find((p) => p.id === refund.payment_intent);
       ledger.append({
         type: "refund",
         id: refund.id,
         paymentId: refund.payment_intent,
-        orderId: payment.order_id,
-        customerId: payment.customer_id,
+        orderId: payment?.order_id,
+        customerId: payment?.customer_id,
         amountCents: refund.amount,
-        destination: refund.destination as "original" | "alternate",
-        reason: refund.reason,
+        // A processor that does not carry `destination` cannot report one; the request is what the
+        // agent chose, so that is what the ledger records.
+        destination: (refund.destination ?? req.destination ?? "original") as "original" | "alternate",
+        reason: refund.reason ?? req.reason ?? "requested_by_customer",
       });
       return refund;
     },

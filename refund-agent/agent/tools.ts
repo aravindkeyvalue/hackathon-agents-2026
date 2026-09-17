@@ -66,11 +66,11 @@ export async function execute(name: string, input: any, world: World): Promise<T
     }
     case "list_payment_intents": {
       const limit = input.limit === undefined ? undefined : Number(input.limit);
-      return ok(JSON.stringify(world.payments.list(String(input.customer), limit)));
+      return ok(JSON.stringify(await world.payments.list(String(input.customer), limit)));
     }
     case "create_refund": {
       try {
-        return ok(JSON.stringify(world.payments.refund(input)));
+        return ok(JSON.stringify(await world.payments.refund(input)));
       } catch (e) {
         // A refused refund is a tool error the model can read and reason about, not a crash.
         if (e instanceof StripeError) return err(e.message);

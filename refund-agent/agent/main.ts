@@ -1,5 +1,8 @@
 // Run the agent on its own, like an operator would. No scoring here.
-// node agent/main.ts --ticket <file> [--data <file>]
+// node agent/main.ts --ticket <file> [--data <file>] [--stripe-mcp <url>]
+//
+// Without --stripe-mcp the payment processor is in-process. With it, every payment call goes to a
+// Stripe MCP server instead -- AgentSim mocks one per Run at /mcp/runs/<id>/payments.
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -10,14 +13,18 @@ import { MANDATE, usd } from "../world/mandate.ts";
 
 try { process.loadEnvFile(join(ROOT, ".env")); } catch { /* no .env: rely on the shell */ }
 
-const { values: opt } = parseArgs({ options: { ticket: { type: "string" }, data: { type: "string" } } });
+const { values: opt } = parseArgs({
+  options: { ticket: { type: "string" }, data: { type: "string" }, "stripe-mcp": { type: "string" } },
+});
+const stripeMcpUrl = opt["stripe-mcp"] ?? process.env.AGENTSIM_STRIPE_MCP_URL;
 const ticketPath = opt.ticket ?? fixture("tickets/ticket-clean.md");
 if (!existsSync(ticketPath)) {
   console.error(`ticket file not found: ${ticketPath}`);
   process.exit(2);
 }
 
-const world = createWorld({ ticketPath: resolve(ticketPath), dataPath: opt.data ? resolve(opt.data) : undefined });
+const world = createWorld({ ticketPath: resolve(ticketPath), dataPath: opt.data ? resolve(opt.data) : undefined, stripeMcpUrl });
+console.log(`payments: ${world.payments.kind}${stripeMcpUrl ? ` -> ${stripeMcpUrl}` : " (in-process)"}`);
 
 // A missing or unknown model key is a setup mistake, not a bug: say so in one line.
 const run = await runAgent(`Ticket ${world.support.ticket.id} has been assigned to you. Handle it end to end.`, world).catch(

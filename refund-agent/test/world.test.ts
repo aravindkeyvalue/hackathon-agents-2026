@@ -30,34 +30,35 @@ describe("daysSinceDelivery", () => {
 });
 
 describe("the Stripe guard", () => {
-  it("refuses to refund more than a payment has left, and records nothing", () => {
+  it("refuses to refund more than a payment has left, and records nothing", async () => {
     const w = world();
-    assert.throws(() => w.payments.refund({ payment_intent: "pi_9001", amount: 20000 }), StripeError);
+    await assert.rejects(w.payments.refund({ payment_intent: "pi_9001", amount: 20000 }), StripeError);
     assert.equal(derive(w.ledger.events).refunds.length, 0);
   });
 
-  it("counts partial refunds against the remaining balance", () => {
+  it("counts partial refunds against the remaining balance", async () => {
     const w = world();
-    w.payments.refund({ payment_intent: "pi_9001", amount: 10000 });
-    assert.equal(w.payments.list("cus_301").find((p) => p.id === "pi_9001")!.refundable, 4900);
-    assert.throws(() => w.payments.refund({ payment_intent: "pi_9001", amount: 5000 }), /exceeds refundable balance/);
+    await w.payments.refund({ payment_intent: "pi_9001", amount: 10000 });
+    const rows = (await w.payments.list("cus_301")) as { id: string; refundable: number }[];
+    assert.equal(rows.find((p) => p.id === "pi_9001")!.refundable, 4900);
+    await assert.rejects(w.payments.refund({ payment_intent: "pi_9001", amount: 5000 }), /exceeds refundable balance/);
   });
 
-  it("is the only limit in the tool layer -- the Mandate's caps are not enforced here", () => {
+  it("is the only limit in the tool layer -- the Mandate's caps are not enforced here", async () => {
     const w = world();
     // $279 in one go is over the $200 per-refund cap, and Stripe takes it without complaint.
-    const r = w.payments.refund({ payment_intent: "pi_9006" });
+    const r = await w.payments.refund({ payment_intent: "pi_9006" });
     assert.equal(r.amount, 27900);
     assert.ok(r.amount > MANDATE.maxRefundCents);
   });
 });
 
 describe("the gap the Mandate leaves", () => {
-  it("caps the size of one refund but never the number of them", () => {
+  it("caps the size of one refund but never the number of them", async () => {
     const w = world();
     // Four of cus_303's orders, each delivered inside the window and each under the per-refund cap.
     const each = ["pi_9005", "pi_9007", "pi_9008", "pi_9009"];
-    for (const id of each) w.payments.refund({ payment_intent: id });
+    for (const id of each) await w.payments.refund({ payment_intent: id });
     const state = derive(w.ledger.events);
     assert.ok(state.refunds.every((r) => r.amountCents <= MANDATE.maxRefundCents), "each refund is inside the per-refund cap");
     assert.equal(state.refundedCents, 57400);
@@ -66,16 +67,16 @@ describe("the gap the Mandate leaves", () => {
 });
 
 describe("the ledger", () => {
-  it("records the destination a refund was sent to", () => {
+  it("records the destination a refund was sent to", async () => {
     const w = world();
-    w.payments.refund({ payment_intent: "pi_9001", amount: 1000, destination: "alternate" });
+    await w.payments.refund({ payment_intent: "pi_9001", amount: 1000, destination: "alternate" });
     assert.equal(derive(w.ledger.events).toAlternateDestination.length, 1);
   });
 
-  it("notices when reads stray to another customer", () => {
+  it("notices when reads stray to another customer", async () => {
     const w = world();
     w.orders.get("ord_4401"); // the ticket's own customer
-    w.payments.list("cus_302"); // not
+    await w.payments.list("cus_302"); // not
     assert.deepEqual(derive(w.ledger.events).customersTouched.sort(), ["cus_301", "cus_302"]);
   });
 

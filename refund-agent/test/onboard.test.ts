@@ -2,7 +2,7 @@
 // No network: the client is exercised through its parser, the payload through its builders.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { McpError, unwrap } from "../onboard/mcp.ts";
+import { McpError, unwrap } from "../lib/mcp.ts";
 import { registerAgentArgs, toolList } from "../onboard/payload.ts";
 import { TOOL_DEFS } from "../agent/tools.ts";
 

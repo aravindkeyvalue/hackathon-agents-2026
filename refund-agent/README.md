@@ -8,8 +8,9 @@ Node 24 runs the TypeScript directly — there is no build step.
 
 | Dir | Role |
 |---|---|
-| `agent/` | The agent. Policy prompt with guards, tool schemas, dispatch, and the provider loop. This is the thing under test. |
-| `world/` | Northwind's refund desk as APIs: the support queue, the order book, a Stripe-shaped payment processor. Event-sourced ledger underneath. |
+| `agent/` | The agent. Policy prompt with guards, tool schemas, dispatch, and one loop per provider. This is the thing under test. |
+| `world/` | Northwind's refund desk as APIs: the support queue, the order book, the payment processor. Event-sourced ledger underneath. |
+| `lib/` | The streamable-HTTP MCP client, shared by the payment processor and the exporter. |
 | `fixtures/` | The seed rows (`data.json`) and the ticket ladder (`tickets/`). |
 | `onboard/` | Exports this agent to AgentSim over MCP and drives the World it drafts back. |
 | `test/` | Key gating, world arithmetic, tool dispatch, export payload. No keys, no network. |
@@ -21,7 +22,7 @@ Put keys in `.env` (copy `.env.example`; gitignored), then `npm install` once.
 ```bash
 npm run agent                                            # the clean ticket
 npm run agent -- --ticket fixtures/tickets/ticket-poison-4-splits.md
-npm test                                                 # 32 tests, no keys required
+npm test                                                 # 52 tests, no keys required
 ```
 
 `npm run agent` prints the tool calls the model made, its final summary, and the ledger afterwards — what
@@ -29,9 +30,47 @@ was refunded, to where, and whether the ticket was escalated.
 
 ## Models and keys
 
-`AGENTSIM_MODEL` picks the model; `claude-*` uses the Anthropic SDK with `ANTHROPIC_API_KEY`. A model name
-matching no known prefix resolves to no provider at all rather than falling back to one, and an unkeyed run
-fails by name rather than as an SDK 401. `test/keys.test.ts` pins this.
+Provider follows the model name in `AGENTSIM_MODEL`: `claude-*` uses the Anthropic SDK with
+`ANTHROPIC_API_KEY`, `gpt-*` and the `o`-series use the OpenAI SDK with `OPENAI_API_KEY`. Same policy, same
+tools, same world.
+
+A key is only reachable on the path that was selected. Running OpenAI never reads `ANTHROPIC_API_KEY`, and a
+model name matching neither prefix resolves to no provider at all rather than falling back to one -- a bare
+`opus` is not the o-series. An unkeyed run fails by name rather than as an SDK 401. `test/keys.test.ts`
+pins all of this.
+
+```bash
+AGENTSIM_MODEL=gpt-5 npm run agent -- --ticket fixtures/tickets/ticket-poison-4-splits.md
+```
+
+## Where Stripe lives
+
+The payment processor sits behind one interface with two backings, chosen by URL and nothing else.
+
+| Run with | Payments go to |
+|---|---|
+| nothing | `world/stripe.ts`, in-process. Offline and deterministic, for development. |
+| `--stripe-mcp http://localhost:3000/mcp/runs/<id>/payments` | AgentSim's mocked Stripe for that Run |
+| `--stripe-mcp https://mcp.stripe.com` | the real thing |
+
+```bash
+npm run agent -- --stripe-mcp http://localhost:3000/mcp/runs/<runId>/payments
+```
+
+The agent's payment tools already carry Stripe's own names and argument shapes -- `list_payment_intents`,
+`create_refund` -- which are the names AgentSim's `stripe` provider serves. So the swap needs no change to
+the agent, its prompt or its tool schemas. `AGENTSIM_STRIPE_MCP_URL` sets the same thing from the
+environment.
+
+Whichever backing is in use, refunds are still written to the local ledger, so the CLI can report what the
+run cost. A refund against a payment this world does not hold is recorded but flagged (`refundsOffWorld`)
+rather than being given an invented order.
+
+**One caveat.** AgentSim's stock `stripe` provider declares `payment_intent`, `amount` and `reason`, and its
+input parsing drops arguments it does not declare. `destination` is therefore accepted and silently ignored,
+so a refund sent to the wrong place cannot be caught on that side. The agent records the destination it
+asked for in its own ledger regardless; catching it in a scored Run needs `destination` added to the
+provider and a `destination` field on the pack's `refunds` entity.
 
 ## The Mandate
 

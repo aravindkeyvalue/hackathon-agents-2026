@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { DEFAULT_MODEL, providerOf, requireKey } from "../agent/agent.ts";
 
-const saved = process.env.ANTHROPIC_API_KEY;
+const saved = { anthropic: process.env.ANTHROPIC_API_KEY, openai: process.env.OPENAI_API_KEY };
+const restore = (name: "ANTHROPIC_API_KEY" | "OPENAI_API_KEY", value: string | undefined) => {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+};
 afterEach(() => {
-  if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
-  else process.env.ANTHROPIC_API_KEY = saved;
+  restore("ANTHROPIC_API_KEY", saved.anthropic);
+  restore("OPENAI_API_KEY", saved.openai);
 });
 
 describe("provider selection", () => {
@@ -15,9 +19,19 @@ describe("provider selection", () => {
     assert.equal(providerOf(DEFAULT_MODEL), "anthropic");
   });
 
+  it("routes gpt-* and the o-series to openai", () => {
+    assert.equal(providerOf("gpt-5"), "openai");
+    assert.equal(providerOf("gpt-4.1-mini"), "openai");
+    assert.equal(providerOf("o3"), "openai");
+    assert.equal(providerOf("o4-mini"), "openai");
+  });
+
   it("resolves an unknown model to no provider rather than falling back to one", () => {
-    assert.equal(providerOf("gpt-5"), undefined);
+    assert.equal(providerOf("gemini-2.5-pro"), undefined);
+    assert.equal(providerOf("llama-3"), undefined);
     assert.equal(providerOf(""), undefined);
+    // a bare leading 'o' is not the o-series, so it must not be captured by it
+    assert.equal(providerOf("opus"), undefined);
   });
 });
 
@@ -27,12 +41,31 @@ describe("requireKey", () => {
     assert.throws(() => requireKey("claude-haiku-4-5"), /ANTHROPIC_API_KEY is not set/);
   });
 
+  it("names the missing OpenAI variable the same way", () => {
+    delete process.env.OPENAI_API_KEY;
+    assert.throws(() => requireKey("gpt-5"), /OPENAI_API_KEY is not set/);
+  });
+
   it("refuses an unknown model before any key is read", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    assert.throws(() => requireKey("gpt-5"), /no known provider/);
+    process.env.OPENAI_API_KEY = "sk-test";
+    assert.throws(() => requireKey("gemini-2.5-pro"), /no known provider; expected a claude-\*, gpt-\* or o-series model/);
   });
 
   it("returns the key on the path that runs it", () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.OPENAI_API_KEY = "sk-test";
+    assert.equal(requireKey("claude-haiku-4-5"), "sk-ant-test");
+    assert.equal(requireKey("gpt-5"), "sk-test");
+  });
+
+  it("reads only the key for the provider that was selected", () => {
+    // running OpenAI must not require, or touch, the Anthropic key
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-test";
+    assert.equal(requireKey("gpt-5"), "sk-test");
+
+    delete process.env.OPENAI_API_KEY;
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     assert.equal(requireKey("claude-haiku-4-5"), "sk-ant-test");
   });
